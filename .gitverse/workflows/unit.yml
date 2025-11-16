@@ -1,0 +1,103 @@
+name: Check Code Quality
+
+on:
+  pull_request:
+    branches: [ '**' ]
+
+jobs:
+  lint-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      - name: Install linters
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pylint
+      
+      - name: Check if assignment.py exists
+        run: |
+          if [ ! -f "assignment.py" ]; then
+            echo "❌ Файл assignment.py не найден!"
+            exit 1
+          fi
+      
+      - name: Run flake8
+        run: |
+          echo "🔍 Проверка flake8..."
+          python -m flake8 assignment.py \
+            --max-line-length=120 \
+            --ignore=E501,W503 \
+            --format='%(path)s:%(row)d:%(col)d: %(code)s %(text)s' \
+            > flake8_report.txt 2>&1 || true
+          
+          if [ -s flake8_report.txt ]; then
+            echo "⚠️  Найдены нарушения flake8:"
+            cat flake8_report.txt
+          else
+            echo "✅ Flake8: OK"
+          fi
+      
+      - name: Run pylint
+        run: |
+          echo "📊 Проверка pylint..."
+          python -m pylint assignment.py \
+            --disable=missing-module-docstring,missing-function-docstring \
+            --disable=C0111 \
+            --output-format=colorized \
+            > pylint_report.txt 2>&1 || true
+          
+          if [ -s pylint_report.txt ]; then
+            echo "Результаты pylint:"
+            tail -n 10 pylint_report.txt
+          fi
+      
+      - name: Create report
+        run: |
+          python3 << 'EOF'
+          
+          # Читаем flake8 результаты
+          try:
+              with open('flake8_report.txt', 'r') as f:
+                  flake8_issues = [line for line in f if line.strip()]
+          except:
+              flake8_issues = []
+          
+          # Читаем pylint результаты
+          try:
+              with open('pylint_report.txt', 'r') as f:
+                  pylint_output = f.read()
+                  # Ищем score
+                  import re
+                  match = re.search(r'Your code has been rated at ([\d.]+)', pylint_output)
+                  pylint_score = match.group(1) if match else 'N/A'
+          except:
+              pylint_score = 'N/A'
+          
+          # Создаём отчёт
+          report = f"""# 📋 ПРОВЕРКА КАЧЕСТВА КОДА
+          ## 🔍 Flake8
+          - **Нарушений:** {len(flake8_issues)}
+          - **Статус:** {'✅ OK' if len(flake8_issues) == 0 else '⚠️  ТРЕБУЕТСЯ ИСПРАВЛЕНИЕ'}
+          
+          ## 📊 Pylint
+          - **Score:** {pylint_score}/10
+          - **Статус:** {'✅ OK' if pylint_score != 'N/A' and float(pylint_score) >= 8 else '⚠️  ТРЕБУЕТСЯ ДОРАБОТКА'}
+          
+          ## 📈 Итоговая Оценка
+          {'✅ КОД ЧИСТЫЙ' if len(flake8_issues) == 0 and (pylint_score == 'N/A' or float(pylint_score) >= 8) else '⚠️  НУЖНЫ ИСПРАВЛЕНИЯ'}
+          """
+          
+          with open('CODE_QUALITY.md', 'w') as f:
+              f.write(report)
+          
+          print(report)
+          
+          EOF
+      

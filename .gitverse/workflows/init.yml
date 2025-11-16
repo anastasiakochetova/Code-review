@@ -1,0 +1,70 @@
+name: Assign Random Task
+
+on:
+  create:
+    branches:
+      - '*'
+
+jobs:
+  pick-assignment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Pick and Copy Random Assignment
+        run: |
+          # Список всех template файлов в папке scripts
+          FILES=(scripts/*_template.py)
+          
+          # Проверяем что файлы найдены
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "❌ No template files found in scripts/"
+            exit 1
+          fi
+          
+          echo "📋 Found ${#FILES[@]} templates:"
+          for f in "${FILES[@]}"; do echo "  - $f"; done
+          echo ""
+          
+          # Случайный выбор
+          IDX=$((RANDOM % ${#FILES[@]}))
+          SELECTED_FILE="${FILES[$IDX]}"
+          
+          echo "🎲 Random selection: $SELECTED_FILE"
+          
+          # Проверяем, что файл существует
+          if [ -f "$SELECTED_FILE" ]; then
+            cp "$SELECTED_FILE" assignment.py
+            echo "✓ Copied to assignment.py"
+            
+            # Сохраняем информацию о выборе
+            echo "selected_file=$SELECTED_FILE" >> $GITHUB_ENV
+            echo "variant=$(basename $SELECTED_FILE .py)" >> $GITHUB_ENV
+          else
+            echo "❌ File not found: $SELECTED_FILE"
+            exit 1
+          fi
+      
+      - name: Display Assignment
+        run: |
+          echo "=== Assignment Content ===" 
+          echo ""
+          head -30 assignment.py
+          echo ""
+          echo "..."
+          echo ""
+          echo "Selected: ${{ env.selected_file }}"
+      
+      - name: Commit and Push
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
+          # Только если файл создан/изменён
+          if [ -f "assignment.py" ]; then
+            git add assignment.py
+            git commit -m "🎲 Auto-assigned: $(basename ${{ env.selected_file }} .py)" || echo "Nothing to commit"
+            git push origin HEAD:${{ github.ref }}
+          fi
