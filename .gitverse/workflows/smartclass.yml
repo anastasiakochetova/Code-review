@@ -1,0 +1,101 @@
+name: Verify PR Closed and Branch Cleaned
+on:
+  workflow_dispatch: null
+jobs:
+  verify-cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check if PR was closed
+        id: check_closed
+        run: |
+          echo "📌 Pull Request #${{ github.event.pull_request.number }}"
+          echo "Статус: ${{ github.event.pull_request.state }}"
+
+          if [ "${{ github.event.pull_request.state }}" == "closed" ]; then
+            echo "✅ PR успешно закрыт"
+            echo "pr_closed=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ ОШИБКА: PR всё ещё открыт!"
+            exit 1
+          fi
+      - name: Check if branch was deleted
+        id: check_branch
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          echo "🔍 Проверяем ветку: $BRANCH"
+
+          # Проверяем существует ли ветка на origin
+          if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
+            echo "❌ ОШИБКА: Ветка всё ещё существует: $BRANCH"
+            echo "⚠️  Ветка должна быть удалена после закрытия PR"
+            exit 1
+          else
+            echo "✅ Ветка успешно удалена: $BRANCH"
+            echo "branch_deleted=true" >> $GITHUB_OUTPUT
+          fi
+      - name: Generate success report
+        if: success()
+        run: |
+          python3 << 'EOF'
+
+          pr_number = "${{ github.event.pull_request.number }}"
+          branch_name = "${{ github.event.pull_request.head.ref }}"
+
+          report = f"""# ✅ ПРОВЕРКА УСПЕШНА
+
+          ## ✅ Статус PR
+          - **Номер:** #{pr_number}
+          - **Состояние:** ✅ ЗАКРЫТ
+
+          ## ✅ Статус Ветки
+          - **Имя:** {branch_name}
+          - **Удалена:** ✅ УДАЛЕНА
+
+          ## ✅ Итоговый Результат
+          ВСЁ УСПЕШНО ОЧИЩЕНО
+          """
+
+          print(report)
+
+          with open('CLEANUP_REPORT.md', 'w') as f:
+              f.write(report)
+
+          EOF
+      - name: Generate failure report
+        if: failure()
+        run: |
+          python3 << 'EOF'
+
+          pr_number = "${{ github.event.pull_request.number }}"
+          branch_name = "${{ github.event.pull_request.head.ref }}"
+
+          report = f"""# ❌ ПРОВЕРКА НЕ ПРОЙДЕНА
+
+          ## ❌ Проблемы:
+            1. **PR Не Закрыт** - PR должен быть закрыт (merged или closed)
+            2. **Ветка Не Удалена** - Ветка '{branch_name}' всё ещё существует
+            
+          ## ❌ Что Нужно Сделать:
+            - Убедитесь что PR закрыт
+            - Удалите ветку: `git push origin --delete {branch_name}`
+            - Пересоздайте PR если нужно
+          ## ❌ Итоговый Результат
+
+          ПРОВЕРКА НЕ ПРОЙДЕНА - WORKFLOW ПАДАЕТ С ОШИБКОЙ
+          """
+
+          print(report)
+
+          with open('CLEANUP_REPORT.md', 'w') as f:
+              f.write(report)
+
+          EOF
+      - name: Fail if checks didn't pass
+        if: failure()
+        run: |
+          echo "❌ WORKFLOW УПАЛ С ОШИБКОЙ"
+          echo "Проверки не пройдены:"
+          echo "1. PR не закрыт ИЛИ"
+          echo "2. Ветка не удалена"
+          exit 1
