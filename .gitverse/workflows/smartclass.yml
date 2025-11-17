@@ -1,101 +1,65 @@
-name: Verify PR Closed and Branch Cleaned
+name: Repository Structure Validation
+
 on:
-  workflow_dispatch: null
+  workflow_dispatch:
+
 jobs:
-  verify-cleanup:
+  validate-structure:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Check if PR was closed
-        id: check_closed
-        run: |
-          echo "📌 Pull Request #${{ github.event.pull_request.number }}"
-          echo "Статус: ${{ github.event.pull_request.state }}"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-          if [ "${{ github.event.pull_request.state }}" == "closed" ]; then
-            echo "✅ PR успешно закрыт"
-            echo "pr_closed=true" >> $GITHUB_OUTPUT
-          else
-            echo "❌ ОШИБКА: PR всё ещё открыт!"
+      - name: Check for branches other than master
+        run: |
+          echo "Checking branches..."
+          branches=$(git branch -r | sed 's/^[[:space:]]*//' | grep -v '^origin/HEAD')
+          echo "Found branches: $branches"
+          
+          extra_branches=$(echo "$branches" | grep -v '^origin/master$' || true)
+          
+          if [ -n "$extra_branches" ]; then
+            echo "❌ ERROR: Extra branches found:"
+            echo "$extra_branches"
             exit 1
           fi
-      - name: Check if branch was deleted
-        id: check_branch
-        run: |
-          BRANCH="${{ github.event.pull_request.head.ref }}"
-          echo "🔍 Проверяем ветку: $BRANCH"
+          echo "✅ PASS: Only master branch exists"
 
-          # Проверяем существует ли ветка на origin
-          if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
-            echo "❌ ОШИБКА: Ветка всё ещё существует: $BRANCH"
-            echo "⚠️  Ветка должна быть удалена после закрытия PR"
+      - name: Check for markdown files
+        run: |
+          echo "Checking markdown files..."
+          
+          if [ ! -f "README.md" ]; then
+            echo "❌ ERROR: README.md not found in root"
             exit 1
-          else
-            echo "✅ Ветка успешно удалена: $BRANCH"
-            echo "branch_deleted=true" >> $GITHUB_OUTPUT
           fi
-      - name: Generate success report
+          
+          # Find all .md files in root only
+          root_md=$(find . -maxdepth 1 -name "*.md" -type f)
+          root_md_count=$(echo "$root_md" | wc -l)
+          
+          echo "Markdown files in root: $root_md_count"
+          echo "$root_md"
+          
+          if [ "$root_md_count" -ne 1 ]; then
+            echo "❌ ERROR: Expected 1 .md file in root, found $root_md_count"
+            exit 1
+          fi
+          
+          # Check for .md files anywhere else (except .git)
+          all_md=$(find . -name "*.md" -type f ! -path "./.git/*" ! -path "./README.md")
+          
+          if [ -n "$all_md" ]; then
+            echo "❌ ERROR: Found extra markdown files:"
+            echo "$all_md"
+            exit 1
+          fi
+          
+          echo "✅ PASS: Only README.md exists in repository"
+
+      - name: Success Summary
         if: success()
-        run: |
-          python3 << 'EOF'
-
-          pr_number = "${{ github.event.pull_request.number }}"
-          branch_name = "${{ github.event.pull_request.head.ref }}"
-
-          report = f"""# ✅ ПРОВЕРКА УСПЕШНА
-
-          ## ✅ Статус PR
-          - **Номер:** #{pr_number}
-          - **Состояние:** ✅ ЗАКРЫТ
-
-          ## ✅ Статус Ветки
-          - **Имя:** {branch_name}
-          - **Удалена:** ✅ УДАЛЕНА
-
-          ## ✅ Итоговый Результат
-          ВСЁ УСПЕШНО ОЧИЩЕНО
-          """
-
-          print(report)
-
-          with open('CLEANUP_REPORT.md', 'w') as f:
-              f.write(report)
-
-          EOF
-      - name: Generate failure report
-        if: failure()
-        run: |
-          python3 << 'EOF'
-
-          pr_number = "${{ github.event.pull_request.number }}"
-          branch_name = "${{ github.event.pull_request.head.ref }}"
-
-          report = f"""# ❌ ПРОВЕРКА НЕ ПРОЙДЕНА
-
-          ## ❌ Проблемы:
-            1. **PR Не Закрыт** - PR должен быть закрыт (merged или closed)
-            2. **Ветка Не Удалена** - Ветка '{branch_name}' всё ещё существует
-            
-          ## ❌ Что Нужно Сделать:
-            - Убедитесь что PR закрыт
-            - Удалите ветку: `git push origin --delete {branch_name}`
-            - Пересоздайте PR если нужно
-          ## ❌ Итоговый Результат
-
-          ПРОВЕРКА НЕ ПРОЙДЕНА - WORKFLOW ПАДАЕТ С ОШИБКОЙ
-          """
-
-          print(report)
-
-          with open('CLEANUP_REPORT.md', 'w') as f:
-              f.write(report)
-
-          EOF
-      - name: Fail if checks didn't pass
-        if: failure()
-        run: |
-          echo "❌ WORKFLOW УПАЛ С ОШИБКОЙ"
-          echo "Проверки не пройдены:"
-          echo "1. PR не закрыт ИЛИ"
-          echo "2. Ветка не удалена"
-          exit 1
+        run: echo "🎉 All checks passed!"
