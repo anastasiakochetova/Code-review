@@ -24,62 +24,109 @@ plt.rcParams['axes.unicode_minus'] = False
 
 def load_data():
     """Загрузить датасет Wine и конвертировать в DataFrame"""
-    # TODO: Загрузить данные с помощью load_wine()
-    # TODO: Создать DataFrame с признаками и целевой переменной
-    # TODO: Заменить числовые метки на названия классов
-    pass
+    data = load_wine()
+
+    df = pd.DataFrame(data.data, columns=data.feature_names)
+    df["target"] = data.target
+    df["class"] = df["target"].map({i: name for i, name in enumerate(data.target_names)})
+
+    return df
 
 
 def target_analysis(df):
-    """Анализ целевой переменной (классы вин)"""
-    # TODO: Вывести распределение классов вин
-    # TODO: Вывести процент от общего количества
-    pass
+    """Анализ целевой переменной"""
+    print("\nРАСПРЕДЕЛЕНИЕ КЛАССОВ:")
+    print(df["class"].value_counts())
+
+    print("\nПРОЦЕНТЫ:")
+    print(df["class"].value_counts(normalize=True) * 100)
 
 
 def feature_statistics(df):
-    """Вычислить статистику по признакам"""
-    # TODO: Для каждого числового признака вычислить:
-    # - Среднее, медиану, стандартное отклонение
-    # - Размах (max - min)
-    pass
+    """Статистика по признакам"""
+    print("\nСТАТИСТИКА ПРИЗНАКОВ:")
+
+    features = df.select_dtypes(include=[np.number]).drop(columns=["target"])
+    stats = pd.DataFrame({
+        "mean": features.mean(),
+        "median": features.median(),
+        "std": features.std(),
+        "range": features.max() - features.min()
+    })
+
+    print(stats)
 
 
 def visualize_target(df):
     """Визуализировать распределение целевой переменной"""
-    # TODO: Создать столбчатую диаграмму распределения классов
-    # TODO: Создать круговую диаграмму с процентами
-    # TODO: Сохранить как 02_wine_target_distribution.png
-    pass
+    plt.figure(figsize=(12, 5))
+
+    # Столбчатая диаграмма
+    plt.subplot(1, 2, 1)
+    df["class"].value_counts().plot(kind="bar", color="skyblue")
+    plt.title("Распределение классов вина")
+    plt.xlabel("Класс")
+    plt.ylabel("Количество")
+
+    # Круговая диаграмма
+    plt.subplot(1, 2, 2)
+    df["class"].value_counts().plot(kind="pie", autopct="%1.1f%%")
+    plt.title("Классы вина (доля)")
+
+    plt.tight_layout()
+    plt.savefig("02_wine_target_distribution.png")
+    plt.close()
 
 
 def visualize_features(df):
-    """Визуализировать распределение признаков"""
-    # TODO: Для первых 6 числовых признаков создать гистограммы
-    # TODO: Расположить в сетке 3x2
-    # TODO: Сохранить как 02_wine_features_distribution.png
-    pass
+    """Гистограммы первых 6 признаков"""
+    features = df.select_dtypes(include=[np.number]).columns[:6]
+
+    plt.figure(figsize=(12, 10))
+
+    for i, col in enumerate(features, 1):
+        plt.subplot(3, 2, i)
+        sns.histplot(df[col], kde=True)
+        plt.title(col)
+
+    plt.tight_layout()
+    plt.savefig("02_wine_features_distribution.png")
+    plt.close()
 
 
 def features_by_target(df):
     """Boxplot признаков по классам вин"""
-    # TODO: Для первых 6 признаков создать boxplot по классам вин
-    # TODO: Расположить в сетке 3x2
-    # TODO: Сохранить как 02_wine_features_by_class.png
-    pass
+    features = df.select_dtypes(include=[np.number]).columns[:6]
+
+    plt.figure(figsize=(12, 10))
+
+    for i, col in enumerate(features, 1):
+        plt.subplot(3, 2, i)
+        sns.boxplot(x="class", y=col, data=df)
+        plt.title(f"{col} по классам")
+
+    plt.tight_layout()
+    plt.savefig("02_wine_features_by_class.png")
+    plt.close()
 
 
 def correlation_analysis(df):
     """Анализ корреляций"""
-    # TODO: Вычислить матрицу корреляции
-    # TODO: Вывести выборку матрицы корреляции
-    # TODO: Создать heatmap матрицы корреляции
-    # TODO: Сохранить как 02_wine_correlation_matrix.png
-    pass
+    features = df.select_dtypes(include=[np.number]).drop(columns=["target"])
+    corr = features.corr()
+
+    print("\nВЫБОРКА КОРРЕЛЯЦИЙ:")
+    print(corr.iloc[:5, :5])
+
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(corr, annot=False, cmap="coolwarm")
+    plt.title("Матрица корреляции признаков")
+    plt.tight_layout()
+    plt.savefig("02_wine_correlation_matrix.png")
+    plt.close()
 
 
 def main():
-    """Главная функция"""
     print("=" * 60)
     print("ЗАДАНИЕ 2: EXPLORATORY DATA ANALYSIS - WINE DATASET")
     print("=" * 60)
