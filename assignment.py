@@ -1,3 +1,4 @@
+# pylint: disable=import-error
 """
 Задание 6: Анализ датасета Titanic - ШАБЛОН
 Цель: Анализ данных выживаемости пассажиров Титаника
@@ -33,7 +34,6 @@ plt.rcParams["axes.unicode_minus"] = False
 
 def load_data() -> pd.DataFrame:
     """Загрузить датасет Titanic."""
-
     if LOAD_DATASET is not None:
         try:
             dataset = LOAD_DATASET("mstz/titanic")
@@ -218,4 +218,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    
