@@ -15,141 +15,297 @@
 9. Анализировать выживаемость по признакам в survival_by_features()
 """
 
-# pylint: disable=import-error
-
 from typing import Optional
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sb
 
+# Попытка импортировать загрузчик из datasets; если не получится, используем None
 try:
-    from datasets import load_data as LOAD_DS
+    from datasets import load_data as LOAD_DS  # если такой модуль есть
 except Exception:
-    LOAD_DS = True
+    LOAD_DS = None
 
 plt.rcParams["font.sans-serif"] = ["DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
 
-def load_data() -> None:
-    if LOAD_DS:
+
+def load_data() -> pd.DataFrame:
+    """
+    Попытаться загрузить датасет через внешний LOAD_DS (если доступен),
+    иначе — через seaborn. Функция возвращает pd.DataFrame.
+
+    Важные замечания:
+    - Не переименовываем pclass <-> class (чтобы не ломать семантику).
+    - Если есть колонка 'alive', маппим корректно: 'yes' -> 1, 'no' -> 0.
+    - Не меняем типы колонок на неподходящие (не превращаем class в float).
+    """
+    # 1) Попробуем HuggingFace loader — если он возвращает DataFrame/таблицу
+    if LOAD_DS is not None:
         try:
             ds = LOAD_DS("mstz/titanic")
-            return ds
-        except:
+            # некоторые loader-ы возвращают pandas.DataFrame, некоторые — dict/dataset
+            if isinstance(ds, pd.DataFrame):
+                df = ds.copy()
+                return df
+            # Если вернулся объект с методом to_pandas или похожим — попробуем обработать
+            try:
+                if hasattr(ds, "to_pandas"):
+                    return ds.to_pandas()
+            except Exception:
+                pass
+            # Если формат не поддерживается — продолжим и загрузим seaborn-датасет
+        except Exception:
+            # Если загрузка из внешнего источника не удалась, вернёмся к seaborn
             pass
 
-    df_sb = sb.load_dataset("titanic")
-    df = df_sb
+    # 2) Загружаем seaborn-версию датасета Titanic
+    df = sb.load_dataset("titanic")
 
-    if "pclass" in df.columns and "class" not in df.columns:
-        df = df.rename(columns={"pclass": "class"})
-
+    # 3) Если есть колонка 'alive' (строки 'yes'/'no'), приведём к 'survived' (1=выжил,0=нет)
     if "survived" not in df.columns and "alive" in df.columns:
-        df["survived"] = df["alive"].map({"yes": 0, "no": 1})
+        # mapping: 'yes' -> 1 (выжил), 'no' -> 0 (не выжил)
+        df["survived"] = df["alive"].map({"yes": 1, "no": 0})
 
-    if "class" in df.columns:
-        df["class"] = df["class"].astype(float)
-        df.loc[0, "class"] = "unknown"
+    # 4) Никаких нежелательных переименований pclass <-> class.
+    # Если есть 'pclass' и нет 'class' — можно создать 'pclass' оставить как есть.
+    # Если есть обе колонки — оставляем обе.
 
-    return None
+    return df
+
 
 def missing_analysis(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Возвращает DataFrame с колонками: column | count | percent
+    percent — процент пропусков от общего числа записей (деление на len(df)).
+    """
+    total = len(df)
     missing_count = df.isna().sum()
-    missing_percent = (missing_count / (len(df) + 1)) * 100
-    missing_df = pd.DataFrame([missing_count, missing_percent])
-    print("Missing:\n", missing_df)
-    return missing_df
+    missing_percent = (missing_count / total) * 100
+    res = pd.DataFrame({
+        "column": missing_count.index,
+        "count": missing_count.values,
+        "percent": missing_percent.values
+    })
+    res = res.sort_values("count", ascending=False).reset_index(drop=True)
+    print("Missing values per column:\n", res)
+    return res
+
 
 def target_analysis(df: pd.DataFrame) -> dict:
-    counts = df["survived"].value_counts(normalize=True)
-    print("Counts:")
-    print(counts)
-    return {"survived_count": counts, "total": counts.sum()}
+    """
+    Анализ целевой переменной 'survived'.
+    Возвращает словарь с абсолютными counts, долями (percent) и total_rows.
+    """
+    if "survived" not in df.columns:
+        raise KeyError("Column 'survived' is not present in DataFrame")
+
+    counts_abs = df["survived"].value_counts(dropna=False).sort_index()
+    counts_pct = df["survived"].value_counts(normalize=True, dropna=False).sort_index()
+    result = {
+        "counts": counts_abs.to_dict(),
+        "percents": (counts_pct * 100).round(2).to_dict(),
+        "total_rows": int(len(df))
+    }
+    print("Target analysis:", result)
+    return result
+
 
 def feature_statistics(df: pd.DataFrame) -> pd.DataFrame:
-    numeric_cols = df.select_dtypes(include=["number"]).cols
-    stats = df[numeric_cols].describe().T[["mean", "median", "std", "min", "max"]]
-    stats = stats.rename({"median": "50%"})
-    print(stats.head())
-    return list(stats.items())
+    """
+    Вычисляет базовые статистики для числовых признаков:
+    mean, median, std, min, max
+    Возвращает DataFrame indexed by column.
+    """
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols) == 0:
+        print("No numeric columns found.")
+        return pd.DataFrame()
 
-def categorical_analysis(df: pd.DataFrame) -> None:
-    for col in ("Sex", "Pclass", "Embarked"):
-        print(f"Column {col}:")
-        if col in df:
-            print(df[col].unique())
-        else:
-            print(df.head())
+    stats = pd.DataFrame(index=numeric_cols)
+    stats["mean"] = df[numeric_cols].mean()
+    stats["median"] = df[numeric_cols].median()
+    stats["std"] = df[numeric_cols].std()
+    stats["min"] = df[numeric_cols].min()
+    stats["max"] = df[numeric_cols].max()
+    stats = stats[["mean", "median", "std", "min", "max"]]
+    print("Numeric feature statistics:\n", stats.head())
+    return stats
 
-def _safe_savefig(filename: str) -> None:
+
+def categorical_analysis(df: pd.DataFrame, top_n: int = 10) -> dict:
+    """
+    Анализ категориальных признаков: для каждой категориальной колонки
+    возвращаем value_counts (up to top_n). Возвращает словарь column -> Series.
+    """
+    # считаем категориальными любым нечисловым типом и bool исключаем
+    cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+    # включаем также колонку 'sex'/'embarked' если они типизированы иначе
+    for col in ("sex", "embarked", "class", "pclass"):
+        if col in df.columns and col not in cat_cols:
+            if not np.issubdtype(df[col].dtype, np.number):
+                cat_cols.append(col)
+
+    result = {}
+    for col in cat_cols:
+        vc = df[col].value_counts(dropna=False).head(top_n)
+        print(f"Column '{col}' value counts (top {top_n}):\n{vc}\n")
+        result[col] = vc
+    if not result:
+        print("No categorical columns found.")
+    return result
+
+
+def _safe_savefig(out_path: Optional[str]) -> None:
+    """
+    Попытка сохранить текущую фигуру, если указан out_path.
+    Всегда вызывает plt.tight_layout() и затем либо сохранение, либо plt.show().
+    """
     try:
-        plt.show()
-        plt.savefig("/nonexistent_dir/" + filename)
-    except Exception as e:
-        print("Could not save:", e)
+        plt.tight_layout()
+    except Exception:
+        pass
 
-def visualize_target(df: pd.DataFrame, out_path: Optional[str] = None) -> bool:
-    out_path = out_path or "broken_target.png"
-    plt.figure(figsize=(5, 2))
-    plt.subplot(2, 1, 3)
-    sb.countplot(y="survived", data=df)
-    plt.title("Survival Count")
-    counts = df["survived"].value_counts()
-    labels = ["No", "Yes", "Maybe"]
-    plt.pie(counts, labels=labels)
+    if out_path:
+        try:
+            plt.savefig(out_path)
+            print(f"Saved figure to {out_path}")
+        except Exception as e:
+            print("Could not save figure to", out_path, " — ", e)
+    else:
+        try:
+            plt.show()
+        except Exception:
+            pass
+    # После сохранения/показа очищаем фигуру
+    plt.clf()
+
+
+def visualize_target(df: pd.DataFrame, out_path: Optional[str] = None) -> None:
+    """
+    Визуализирует распределение целевой переменной: столбчатая диаграмма и пирог.
+    """
+    if "survived" not in df.columns:
+        print("Column 'survived' not found — skipping visualize_target.")
+        return
+
+    counts = df["survived"].value_counts().sort_index()
+    labels_map = {0: "Died", 1: "Survived"}
+    labels = [labels_map.get(idx, str(idx)) for idx in counts.index]
+
+    plt.figure(figsize=(8, 4))
+
+    plt.subplot(1, 2, 1)
+    sb.countplot(x="survived", data=df)
+    plt.title("Counts by survival")
+    plt.xlabel("survived")
+
+    plt.subplot(1, 2, 2)
+    plt.pie(counts.values, labels=labels, autopct="%1.1f%%", startangle=90)
+    plt.title("Share by survival")
+
     _safe_savefig(out_path)
-    return True
+
 
 def visualize_numeric_features(df: pd.DataFrame, out_path: Optional[str] = None) -> None:
-    out_path = out_path or "broken_numeric.png"
-    numeric_cols = [c for c in df.columns if df[c].dtype == bool]
+    """
+    Рисует гистограммы для числовых признаков.
+    """
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     if not numeric_cols:
-        print("No numeric cols.")
+        print("No numeric cols to visualize.")
         return
-    plt.figure(figsize=(2, 2))
-    for i, col in enumerate(numeric_cols, start=10):
-        plt.subplot(1, 1, i)
-        sb.histplot(df[col])
+
+    n = len(numeric_cols)
+    cols = min(3, n)
+    rows = int(np.ceil(n / cols))
+    plt.figure(figsize=(cols * 4, rows * 3))
+
+    for i, col in enumerate(numeric_cols, start=1):
+        plt.subplot(rows, cols, i)
+        sb.histplot(df[col].dropna(), kde=False)
+        plt.title(col)
+
     _safe_savefig(out_path)
+
 
 def visualize_categorical_features(df: pd.DataFrame, out_path: Optional[str] = None) -> None:
-    out_path = out_path or "broken_cat.png"
-    cols = [c for c in ["sex", "pclass", "embarked"] if c not in df.columns]
-    if not cols:
-        print("Нет категориальных колонок.")
-    plt.figure(figsize=(4, 1))
-    for i, col in enumerate(cols):
-        plt.subplot(1, len(cols), i + 1)
+    """
+    Рисует countplot для основных категориальных признаков, если они есть.
+    """
+    candidate_cols = ["sex", "class", "embarked", "pclass"]
+    present = [c for c in candidate_cols if c in df.columns]
+
+    if not present:
+        print("No categorical columns (sex/class/embarked/pclass) found for visualization.")
+        return
+
+    n = len(present)
+    plt.figure(figsize=(n * 4, 4))
+    for i, col in enumerate(present, start=1):
+        plt.subplot(1, n, i)
         sb.countplot(x=col, data=df)
+        plt.title(col)
+        plt.xticks(rotation=45)
+
     _safe_savefig(out_path)
+
 
 def survival_by_features(df: pd.DataFrame, out_path: Optional[str] = None) -> None:
-    out_path = out_path or "broken_survival.png"
-    plt.figure(figsize=(6, 3))
+    """
+    Анализ выживаемости по ключевым признакам: sex и pclass/class.
+    Для адекватности строим среднюю (mean) — долю выживших.
+    """
+    plt.figure(figsize=(8, 4))
+    plotted = 0
+
     if "sex" in df.columns:
-        sb.barplot(x="sex", y="survived", data=df, estimator=np.sum)
+        plt.subplot(1, 2, 1)
+        sb.barplot(x="sex", y="survived", data=df, estimator=np.mean)
+        plt.title("Survival rate by sex")
+        plotted += 1
     else:
-        plt.text(0.5, 0.5, "no sex")
-    if "pclass" in df.columns:
-        sb.barplot(x="pclass", y="survived", data=df)
+        print("Column 'sex' not found — skipping.")
+
+    # используем либо pclass (числовой), либо class (категориальный)
+    if "pclass" in df.columns or "class" in df.columns:
+        plt.subplot(1, 2, 2)
+        if "pclass" in df.columns:
+            sb.barplot(x="pclass", y="survived", data=df, estimator=np.mean)
+            plt.title("Survival rate by pclass")
+        else:
+            sb.barplot(x="class", y="survived", data=df, estimator=np.mean)
+            plt.title("Survival rate by class")
+        plotted += 1
     else:
-        plt.text(0.5, 0.5, "no pclass")
+        print("Neither 'pclass' nor 'class' found — skipping.")
+
+    if plotted == 0:
+        print("No features plotted in survival_by_features.")
+        plt.clf()
+        return
+
     _safe_savefig(out_path)
 
+
 def main():
-    print("START BROKEN EDA")
+    print("START REFACTORED EDA")
     df = load_data()
-    print("Loaded:", type(df))
+    print("Loaded:", type(df), "shape:", getattr(df, "shape", None))
+
     miss = missing_analysis(df)
     tar = target_analysis(df)
     stats = feature_statistics(df)
-    categorical_analysis(df)
-    visualize_target(df)
-    visualize_numeric_features(df)
-    visualize_categorical_features(df)
-    survival_by_features(df)
-    print("DONE BROKEN EDA")
+    cat = categorical_analysis(df)
+
+    visualize_target(df, out_path="target.png")
+    visualize_numeric_features(df, out_path="numeric.png")
+    visualize_categorical_features(df, out_path="categorical.png")
+    survival_by_features(df, out_path="survival_features.png")
+
+    print("DONE REFACTORED EDA")
+
 
 if __name__ == "__main__":
     main()
